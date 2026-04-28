@@ -27,6 +27,16 @@ const SIGNAL_COLORS = {
   off:    { bg: '#1e293b', glow: 'transparent'              },
 };
 
+const OPP = { N:'S', S:'N', E:'W', W:'E' };
+const EV_TYPES = {
+  ambulance: { label:'🚑 Ambulance', priority:3, dur:8000, color:'#ef4444',
+    sigs:(a)=>({N:'red',S:'red',E:'red',W:'red',[a]:'green'}) },
+  firetruck:  { label:'🚒 Fire Truck', priority:2, dur:6000, color:'#f97316',
+    sigs:(a)=>({N:'red',S:'red',E:'red',W:'red',[a]:'green',[OPP[a]]:'green'}) },
+  police:     { label:'🚓 Police',    priority:1, dur:4000, color:'#3b82f6',
+    sigs:(a)=>({N:'yellow',S:'yellow',E:'yellow',W:'yellow',[a]:'green'}) },
+};
+
 /* ─────────────────────────────────────────────
    Car definitions — one car per arm direction
 ───────────────────────────────────────────── */
@@ -48,7 +58,7 @@ const CAR_DEFS = [
 /* ─────────────────────────────────────────────
    Single animated car (SVG)
 ───────────────────────────────────────────── */
-function Car({ def, canGo, emergency }) {
+function Car({ def, canGo }) {
   const [pos, setPos] = useState({ x: def.x0, y: def.y0 });
   const [gone, setGone]   = useState(false);
   const [active, setActive] = useState(false);
@@ -70,7 +80,7 @@ function Car({ def, canGo, emergency }) {
     if (!active) return;
     if (gone) return;
 
-    if (canGo || (emergency && def.arm === 'N')) {
+    if (canGo) {
       // Drive through
       setPos(EXIT);
       resetRef.current = setTimeout(() => {
@@ -81,7 +91,7 @@ function Car({ def, canGo, emergency }) {
       // Creep to stop line
       setPos(STOP);
     }
-  }, [canGo, emergency, active]);
+  }, [canGo, active]);
 
   useEffect(() => () => clearTimeout(resetRef.current), []);
 
@@ -130,14 +140,14 @@ function SignalHead({ x, y, sig }) {
 /* ─────────────────────────────────────────────
    Four-way intersection SVG (400×400 canvas)
 ───────────────────────────────────────────── */
-function Intersection({ phase, emergency, pedestrian }) {
-  const sigs = {
+function Intersection({ phase, evOverride, pedestrian }) {
+  const sigs = evOverride ?? {
     N: armSignal('N', phase),
     S: armSignal('S', phase),
     E: armSignal('E', phase),
     W: armSignal('W', phase),
   };
-  if (emergency) { sigs.N = sigs.S = sigs.E = sigs.W = 'green'; }
+  const emergency = !!evOverride;
 
   const C = 200, RW = 60; // centre, road half-width
 
@@ -203,9 +213,7 @@ function Intersection({ phase, emergency, pedestrian }) {
 
       {/* ── Cars ── */}
       {CAR_DEFS.map(def => (
-        <Car key={def.id} def={def}
-          canGo={armSignal(def.arm, phase) === 'green'}
-          emergency={emergency} />
+        <Car key={def.id} def={def} canGo={sigs[def.arm] === 'green'} />
       ))}
 
       {/* ── Signal heads ── */}
@@ -252,6 +260,8 @@ const TrafficSimulation = () => {
   const [phaseIdx, setPhaseIdx]       = useState(0);
   const [timeLeft, setTimeLeft]       = useState(PHASES[0].duration);
   const [isEmergency, setIsEmergency] = useState(false);
+  const [evType, setEvType]           = useState('ambulance');
+  const [evArm, setEvArm]             = useState('N');
   const [pedestrian, setPedestrian]   = useState(false);
   const [isPaused, setIsPaused]       = useState(false);
   const [cycleCount, setCycleCount]   = useState(0);
@@ -279,7 +289,7 @@ const TrafficSimulation = () => {
       setIsEmergency(false);
       setPhaseIdx(0);
       setTimeLeft(PHASES[0].duration);
-    }, 6000);
+    }, EV_TYPES[evType].dur);
   };
 
   const handlePedestrian = () => {
@@ -296,6 +306,8 @@ const TrafficSimulation = () => {
     setPhaseIdx(0);
     setTimeLeft(PHASES[0].duration);
     setIsEmergency(false);
+    setEvType('ambulance');
+    setEvArm('N');
     setPedestrian(false);
     setIsPaused(false);
     setCycleCount(0);
@@ -304,7 +316,7 @@ const TrafficSimulation = () => {
   const activePhase = isEmergency ? 'EMERGENCY' : currentPhase.id;
 
   const sigColor = (arm) => {
-    if (isEmergency) return 'green';
+    if (isEmergency) return EV_TYPES[evType].sigs(evArm)[arm];
     return armSignal(arm, currentPhase.id);
   };
 
@@ -340,12 +352,12 @@ const TrafficSimulation = () => {
           <div className="relative bg-slate-950 rounded-[32px] border border-slate-800 overflow-hidden
                           shadow-[0_0_80px_rgba(59,130,246,0.08)] aspect-square max-w-[520px] mx-auto w-full">
             {isEmergency && (
-              <div className="absolute inset-0 bg-red-500/5 z-10 pointer-events-none
-                              animate-pulse rounded-[32px] ring-2 ring-red-500/40" />
+              <div className="absolute inset-0 z-10 pointer-events-none animate-pulse rounded-[32px]"
+                style={{background:`${EV_TYPES[evType].color}0d`,boxShadow:`inset 0 0 0 2px ${EV_TYPES[evType].color}66`}} />
             )}
             <Intersection
               phase={currentPhase.id}
-              emergency={isEmergency}
+              evOverride={isEmergency ? EV_TYPES[evType].sigs(evArm) : null}
               pedestrian={pedestrian}
             />
           </div>
@@ -363,7 +375,7 @@ const TrafficSimulation = () => {
                   ${isEmergency ? 'bg-rose-500/20 text-rose-400 border-rose-500/30'
                   : currentPhase.id.includes('Y') ? 'bg-amber-500/20 text-amber-400 border-amber-500/30'
                   : 'bg-blue-500/20 text-blue-400 border-blue-500/30'}`}>
-                  {isEmergency ? '⚠ EMERGENCY GREEN' : currentPhase.label}
+                  {isEmergency ? `${EV_TYPES[evType].label} — P${EV_TYPES[evType].priority}` : currentPhase.label}
                 </span>
               </div>
 
@@ -419,43 +431,69 @@ const TrafficSimulation = () => {
               </div>
             </div>
 
-            {/* Action buttons */}
-            <div className="grid grid-cols-2 gap-3">
+            {/* Emergency vehicle dispatcher */}
+            <div className="bg-slate-900/70 border border-slate-800 rounded-3xl p-4 space-y-3">
+              <p className="text-slate-400 text-xs font-bold uppercase tracking-widest">Emergency Dispatch</p>
+              <div className="grid grid-cols-3 gap-2">
+                {Object.entries(EV_TYPES).map(([key, ev]) => (
+                  <button key={key} onClick={() => setEvType(key)} disabled={isEmergency}
+                    className="py-2.5 px-1 rounded-xl text-xs font-bold border transition-all disabled:opacity-40 text-center"
+                    style={evType === key
+                      ? { background:`${ev.color}22`, borderColor:ev.color, color:'white' }
+                      : { background:'transparent', borderColor:'#334155', color:'#94a3b8' }}>
+                    <div>{ev.label.split(' ')[0]}</div>
+                    <div className="text-[10px] mt-0.5">{ev.label.split(' ').slice(1).join(' ')}</div>
+                    <div className="text-[9px] opacity-60 mt-0.5">P{ev.priority} · {ev.dur/1000}s</div>
+                  </button>
+                ))}
+              </div>
+              <div>
+                <p className="text-slate-500 text-[10px] uppercase tracking-widest mb-1.5">Approaching from arm</p>
+                <div className="flex gap-2">
+                  {['N','S','E','W'].map(a => (
+                    <button key={a} onClick={() => setEvArm(a)} disabled={isEmergency}
+                      className="flex-1 py-1.5 rounded-lg text-xs font-bold border transition-all disabled:opacity-40"
+                      style={evArm === a
+                        ? { background:'#2563eb', borderColor:'#3b82f6', color:'white' }
+                        : { background:'transparent', borderColor:'#334155', color:'#94a3b8' }}>
+                      {a}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <button onClick={handleEmergency} disabled={isEmergency}
-                className="flex items-center justify-center gap-2 px-4 py-3.5 rounded-2xl
-                           bg-rose-600 hover:bg-rose-500 disabled:opacity-40 disabled:cursor-not-allowed
-                           text-white font-bold text-sm transition-all active:scale-95 shadow-lg shadow-rose-600/20">
-                <Siren size={18} /> Emergency
+                className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl text-white font-bold text-sm transition-all active:scale-95 disabled:opacity-40"
+                style={{ background: EV_TYPES[evType].color, boxShadow:`0 4px 20px ${EV_TYPES[evType].color}55` }}>
+                <Siren size={16} /> Dispatch from {evArm}
               </button>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
               <button onClick={handlePedestrian} disabled={pedestrian}
-                className="flex items-center justify-center gap-2 px-4 py-3.5 rounded-2xl
-                           bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 disabled:cursor-not-allowed
-                           text-white font-bold text-sm transition-all active:scale-95 shadow-lg shadow-emerald-600/20">
-                <User size={18} /> Pedestrian
+                className="flex items-center justify-center gap-2 px-3 py-3 rounded-2xl col-span-1
+                           bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40
+                           text-white font-bold text-xs transition-all active:scale-95">
+                <User size={15} /> Ped
               </button>
               <button onClick={() => setIsPaused(p => !p)}
-                className="flex items-center justify-center gap-2 px-4 py-3.5 rounded-2xl
-                           bg-slate-700 hover:bg-slate-600
-                           text-white font-bold text-sm transition-all active:scale-95 col-span-1">
-                {isPaused ? '▶ Resume' : '⏸ Pause'}
+                className="flex items-center justify-center gap-1 px-3 py-3 rounded-2xl
+                           bg-slate-700 hover:bg-slate-600 text-white font-bold text-xs transition-all active:scale-95">
+                {isPaused ? '▶' : '⏸'} {isPaused ? 'Resume' : 'Pause'}
               </button>
               <button onClick={handleReset}
-                className="flex items-center justify-center gap-2 px-4 py-3.5 rounded-2xl
-                           bg-slate-700 hover:bg-slate-600
-                           text-white font-bold text-sm transition-all active:scale-95">
-                <RotateCcw size={16} /> Reset
+                className="flex items-center justify-center gap-1 px-3 py-3 rounded-2xl
+                           bg-slate-700 hover:bg-slate-600 text-white font-bold text-xs transition-all active:scale-95">
+                <RotateCcw size={14} /> Reset
               </button>
             </div>
 
             {/* Legend */}
             <div className="bg-slate-900/40 border border-slate-800/60 rounded-2xl p-4 space-y-2">
-              <p className="text-slate-500 text-xs font-bold uppercase tracking-widest">How it works</p>
+              <p className="text-slate-500 text-xs font-bold uppercase tracking-widest">Priority Levels</p>
               <ul className="text-slate-400 text-xs space-y-1.5">
-                <li>🔵 <strong className="text-slate-300">Phase NS</strong> — North &amp; South get green, E &amp; W wait</li>
-                <li>🟡 <strong className="text-slate-300">Yellow</strong> — 3 s clearance before switching arms</li>
-                <li>🟢 <strong className="text-slate-300">Phase EW</strong> — East &amp; West get green, N &amp; S wait</li>
-                <li>🔴 <strong className="text-slate-300">Emergency</strong> — All arms green for 6 s corridor</li>
-                <li>🚶 <strong className="text-slate-300">Pedestrian</strong> — Zebra crossings appear, rush to red</li>
+                <li>🚑 <strong className="text-red-400">P3 Ambulance (8s)</strong> — All arms RED, one green corridor</li>
+                <li>🚒 <strong className="text-orange-400">P2 Fire Truck (6s)</strong> — Cross arms RED, parallel also green</li>
+                <li>🚓 <strong className="text-blue-400">P1 Police (4s)</strong> — Vehicle arm green, others YELLOW</li>
+                <li>🚶 <strong className="text-slate-300">Pedestrian</strong> — Zebra crossings, signal rushes to red</li>
               </ul>
             </div>
 
